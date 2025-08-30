@@ -10,7 +10,7 @@ if (-not (Test-Path $screenshotFolder)) {
     New-Item -ItemType Directory -Path $screenshotFolder -Force
 }
 
-# Minimize the PowerShell window
+# Minimize the PowerShell window and add DPI awareness
 Add-Type -TypeDefinition @"
     using System;
     using System.Runtime.InteropServices;
@@ -19,10 +19,23 @@ Add-Type -TypeDefinition @"
         public static extern IntPtr GetConsoleWindow();
         [DllImport("user32.dll")]
         public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")]
+        public static extern bool GetCursorPos(out POINT lpPoint);
+        [DllImport("user32.dll")]
+        public static extern bool SetProcessDPIAware();
         public const int SW_MINIMIZE = 6;
         public const int SW_RESTORE = 9;
     }
+    
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT {
+        public int X;
+        public int Y;
+    }
 "@
+
+# Set DPI awareness to ensure consistent coordinate systems
+[Win32]::SetProcessDPIAware()
 
 $consolePtr = [Win32]::GetConsoleWindow()
 # Only minimize if console is visible (not when launched via hotkey)
@@ -75,8 +88,10 @@ $isSelecting = $false
 
 # Mouse down event
 $form.Add_MouseDown({
-    # Store screen coordinates directly
-    $script:startPoint = New-Object System.Drawing.Point(($_.X + $form.Left), ($_.Y + $form.Top))
+    # Use DPI-aware cursor position
+    $cursorPos = New-Object POINT
+    [Win32]::GetCursorPos([ref]$cursorPos)
+    $script:startPoint = New-Object System.Drawing.Point($cursorPos.X, $cursorPos.Y)
     $script:endPoint = $script:startPoint
     $script:isSelecting = $true
     $form.Invalidate()
@@ -85,8 +100,10 @@ $form.Add_MouseDown({
 # Mouse move event
 $form.Add_MouseMove({
     if ($script:isSelecting) {
-        # Store screen coordinates directly
-        $script:endPoint = New-Object System.Drawing.Point(($_.X + $form.Left), ($_.Y + $form.Top))
+        # Use DPI-aware cursor position
+        $cursorPos = New-Object POINT
+        [Win32]::GetCursorPos([ref]$cursorPos)
+        $script:endPoint = New-Object System.Drawing.Point($cursorPos.X, $cursorPos.Y)
         $form.Invalidate()
     }
 })
@@ -95,11 +112,14 @@ $form.Add_MouseMove({
 $form.Add_Paint({
     if ($script:isSelecting) {
         # Convert screen coordinates to form coordinates for drawing
+        $startFormPoint = $form.PointToClient($script:startPoint)
+        $endFormPoint = $form.PointToClient($script:endPoint)
+        
         $selectionRect = New-Object System.Drawing.Rectangle
-        $selectionRect.X = [Math]::Min($script:startPoint.X, $script:endPoint.X) - $form.Left
-        $selectionRect.Y = [Math]::Min($script:startPoint.Y, $script:endPoint.Y) - $form.Top
-        $selectionRect.Width = [Math]::Abs($script:endPoint.X - $script:startPoint.X)
-        $selectionRect.Height = [Math]::Abs($script:endPoint.Y - $script:startPoint.Y)
+        $selectionRect.X = [Math]::Min($startFormPoint.X, $endFormPoint.X)
+        $selectionRect.Y = [Math]::Min($startFormPoint.Y, $endFormPoint.Y)
+        $selectionRect.Width = [Math]::Abs($endFormPoint.X - $startFormPoint.X)
+        $selectionRect.Height = [Math]::Abs($endFormPoint.Y - $startFormPoint.Y)
         
         if ($selectionRect.Width -gt 0 -and $selectionRect.Height -gt 0) {
             # Draw red border around selection
@@ -120,8 +140,10 @@ $form.Add_Paint({
 
 # Mouse up event - capture screenshot
 $form.Add_MouseUp({
-    # Store final screen coordinates
-    $script:endPoint = New-Object System.Drawing.Point(($_.X + $form.Left), ($_.Y + $form.Top))
+    # Use DPI-aware cursor position
+    $cursorPos = New-Object POINT
+    [Win32]::GetCursorPos([ref]$cursorPos)
+    $script:endPoint = New-Object System.Drawing.Point($cursorPos.X, $cursorPos.Y)
     
     if ($script:isSelecting) {
         $script:isSelecting = $false
